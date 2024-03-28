@@ -13,13 +13,13 @@ import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.os.Parcelable
-import androidx.annotation.RequiresApi
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.app.NotificationCompat
 import com.zavierdev.ticktack.MainActivity
 import com.zavierdev.ticktack.MainActivity.Companion.EXTRA_COUNTER_SERVICE_DATA
 import com.zavierdev.ticktack.R
+import com.zavierdev.ticktack.service.CounterService.Companion.ACTION_START
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -50,7 +50,7 @@ enum class CounterState {
 object CounterServiceCommands {
     fun start(context: Context, initData: CounterServiceInitData) {
         val intent = Intent(context, CounterService::class.java)
-        intent.action = CounterService.ACTION_START
+        intent.action = ACTION_START
         intent.putExtra(CounterService.EXTRA_INIT_DATA, initData)
         context.startService(intent)
     }
@@ -78,9 +78,14 @@ object CounterServiceCommands {
         intent.action = CounterService.ACTION_STOP
         context.startService(intent)
     }
+
+    fun broadcast(context: Context) {
+        val intent = Intent(context, CounterService::class.java)
+        intent.action = CounterService.ACTION_BROADCAST
+        context.startService(intent)
+    }
 }
 
-@RequiresApi(Build.VERSION_CODES.O)
 class CounterService : Service() {
     companion object {
         const val NOTIFICATION_CHANNEL_ID = "COUNTER_NOTIFICATION_ID"
@@ -88,6 +93,7 @@ class CounterService : Service() {
         const val NOTIFICATION_ID = 10
         const val COUNTER_SERVICE_BROADCAST = "COUNTER_SERVICE_BROADCAST"
         const val EXTRA_INIT_DATA = "COUNTER_SERVICE_EXTRA_START_DATA"
+        const val ACTION_BROADCAST = "COUNTER_SERVICE_ACTION_BROADCAST"
         const val ACTION_START = "COUNTER_SERVICE_ACTION_START"
         const val ACTION_PAUSE = "COUNTER_SERVICE_ACTION_PAUSE"
         const val ACTION_RESUME = "COUNTER_SERVICE_ACTION_RESUME"
@@ -101,11 +107,11 @@ class CounterService : Service() {
     private val binder = LocalBinder()
 
     private var scope: CoroutineScope = CoroutineScope(Job())
-    private var counterState = mutableStateOf(CounterState.CANCELED)
-    private var firstTotalSeconds = mutableIntStateOf(0)
-    private var seconds = mutableIntStateOf(0)
-    private var minutes = mutableIntStateOf(0)
-    private var hours = mutableIntStateOf(0)
+    private val counterState = mutableStateOf(CounterState.CANCELED)
+    private val firstTotalSeconds = mutableIntStateOf(0)
+    private val seconds = mutableIntStateOf(0)
+    private val minutes = mutableIntStateOf(0)
+    private val hours = mutableIntStateOf(0)
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent != null) {
@@ -134,6 +140,10 @@ class CounterService : Service() {
 
                 ACTION_STOP -> {
                     stopForegroundService()
+                }
+
+                ACTION_BROADCAST -> {
+                    broadcastDataToActivity()
                 }
             }
         }

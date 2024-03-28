@@ -52,6 +52,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.constraintlayout.compose.ConstraintLayout
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.zavierdev.ticktack.MainActivity.Companion.EXTRA_COUNTER_SERVICE_DATA
 import com.zavierdev.ticktack.helper.bindForegroundService
 import com.zavierdev.ticktack.service.CounterService
@@ -148,7 +149,14 @@ fun MainScreen() {
                         }
 
                         CounterState.PAUSE -> {
-                            // pass
+                            val totalSeconds = (hours * 60 * 60) + (minutes * 60) + seconds - 1
+                            synchronizeCounterDisplay(
+                                counterServiceData.hours,
+                                counterServiceData.minutes,
+                                counterServiceData.seconds
+                            )
+                            countProgress =
+                                (totalSeconds.toFloat() / counterServiceData.firstTotalSeconds.toFloat() * 100) / 100
                         }
 
                         CounterState.COMPLETED -> {
@@ -166,6 +174,13 @@ fun MainScreen() {
                     }
                 }
             }
+        }
+    }
+
+    LifecycleResumeEffect(Unit) {
+        CounterServiceCommands.broadcast(context)
+        onPauseOrDispose {
+            // pass
         }
     }
 

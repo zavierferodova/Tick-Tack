@@ -63,6 +63,7 @@ dependencies {
     implementation(libs.androidx.constraintlayout.compose)
     implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.material.icons.extended)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
