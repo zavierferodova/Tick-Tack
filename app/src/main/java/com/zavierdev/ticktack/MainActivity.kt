@@ -1,5 +1,10 @@
 package com.zavierdev.ticktack
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Context.RECEIVER_EXPORTED
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -29,7 +34,7 @@ import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -47,8 +52,13 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.constraintlayout.compose.ConstraintLayout
-import com.zavierdev.ticktack.helper.rememberBoundLocalService
+import com.zavierdev.ticktack.MainActivity.Companion.EXTRA_COUNTER_SERVICE_DATA
+import com.zavierdev.ticktack.helper.bindForegroundService
 import com.zavierdev.ticktack.service.CounterService
+import com.zavierdev.ticktack.service.CounterService.Companion.COUNTER_SERVICE_BROADCAST
+import com.zavierdev.ticktack.service.CounterServiceCommands
+import com.zavierdev.ticktack.service.CounterServiceData
+import com.zavierdev.ticktack.service.CounterServiceInitData
 import com.zavierdev.ticktack.service.CounterState
 import com.zavierdev.ticktack.ui.components.EndlessVerticalPage
 import com.zavierdev.ticktack.ui.components.rememberEndlessPagerState
@@ -56,6 +66,10 @@ import com.zavierdev.ticktack.ui.theme.TimerTheme
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        const val EXTRA_COUNTER_SERVICE_DATA = "EXTRA_COUNTER_SERVICE_DATA"
+    }
+
     @RequiresApi(Build.VERSION_CODES.O)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,6 +83,10 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MainScreen() {
+    bindForegroundService<CounterService, CounterService.LocalBinder> {
+        service
+    }
+
     val mapTime = fun(value: Int): String {
         var str = value.toString()
         if (value < 10) {
@@ -80,8 +98,6 @@ fun MainScreen() {
     val minuteList = (0..59).toList().map(mapTime)
 
     val context = LocalContext.current
-    val counterService =
-        rememberBoundLocalService<CounterService, CounterService.LocalBinder> { service }
     val countDownScope = rememberCoroutineScope()
     val secondPagerState = rememberEndlessPagerState(items = minuteList)
     val minutePagerState = rememberEndlessPagerState(items = minuteList)
@@ -109,32 +125,59 @@ fun MainScreen() {
         }
     }
 
-    LaunchedEffect(counterService) {
-        counterService?.addObserver {
-            countDownScope.launch {
-                timerState = it.state
-                when (it.state) {
-                    CounterState.START -> {
-                        val totalSeconds = (hours * 60 * 60) + (minutes * 60) + seconds - 1
-                        synchronizeCounterDisplay(it.hours, it.minutes, it.seconds)
-                        countProgress =
-                            (totalSeconds.toFloat() / it.firstTotalSeconds.toFloat() * 100) / 100
-                    }
+    val broadcastReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val counterServiceData =
+                intent?.getParcelableExtra(
+                    EXTRA_COUNTER_SERVICE_DATA,
+                    CounterServiceData::class.java
+                )
 
-                    CounterState.PAUSE -> {
-                        // pass
-                    }
+            if (counterServiceData != null) {
+                countDownScope.launch {
+                    timerState = counterServiceData.state
+                    when (counterServiceData.state) {
+                        CounterState.START -> {
+                            val totalSeconds = (hours * 60 * 60) + (minutes * 60) + seconds - 1
+                            synchronizeCounterDisplay(
+                                counterServiceData.hours,
+                                counterServiceData.minutes,
+                                counterServiceData.seconds
+                            )
+                            countProgress =
+                                (totalSeconds.toFloat() / counterServiceData.firstTotalSeconds.toFloat() * 100) / 100
+                        }
 
-                    CounterState.COMPLETED -> {
-                        countProgress = 0f
-                    }
+                        CounterState.PAUSE -> {
+                            // pass
+                        }
 
-                    CounterState.CANCELED -> {
-                        synchronizeCounterDisplay(it.hours, it.minutes, it.seconds)
-                        countProgress = 1f
+                        CounterState.COMPLETED -> {
+                            countProgress = 0f
+                        }
+
+                        CounterState.CANCELED -> {
+                            synchronizeCounterDisplay(
+                                counterServiceData.hours,
+                                counterServiceData.minutes,
+                                counterServiceData.seconds
+                            )
+                            countProgress = 1f
+                        }
                     }
                 }
             }
+        }
+    }
+
+    DisposableEffect(context) {
+        context.registerReceiver(
+            broadcastReceiver,
+            IntentFilter(COUNTER_SERVICE_BROADCAST),
+            RECEIVER_EXPORTED
+        )
+        onDispose {
+            context.unregisterReceiver(broadcastReceiver)
         }
     }
 
@@ -144,24 +187,31 @@ fun MainScreen() {
             Toast.makeText(context, "Waktu tidak boleh kurang dari 5 detik", Toast.LENGTH_SHORT)
                 .show()
         } else {
-            counterService?.startForegroundService(hours, minutes, seconds)
+            CounterServiceCommands.start(
+                context, CounterServiceInitData(
+                    hours, minutes, seconds
+                )
+            )
         }
     }
 
     val resumeCountDown = {
-        counterService?.resumeForegroundService()
+        CounterServiceCommands.resume(context)
     }
 
     val pauseCountDown = {
-        counterService?.pauseForegroundService()
+        CounterServiceCommands.pause(context)
+        val intent = Intent(context, CounterService::class.java)
+        intent.action = CounterService.ACTION_PAUSE
+        context.startService(intent)
     }
 
     val resetCountDown = {
-        counterService?.resetForegroundService()
+        CounterServiceCommands.reset(context)
     }
 
     val stopCountDown = {
-        counterService?.stopForegroundService()
+        CounterServiceCommands.stop(context)
     }
 
     TimerTheme {

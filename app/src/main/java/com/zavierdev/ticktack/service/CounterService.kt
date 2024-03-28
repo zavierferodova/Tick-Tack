@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.app.NotificationCompat
 import com.zavierdev.ticktack.MainActivity
+import com.zavierdev.ticktack.MainActivity.Companion.EXTRA_COUNTER_SERVICE_DATA
 import com.zavierdev.ticktack.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -26,9 +27,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.parcelize.Parcelize
 
-enum class CounterState {
-    START, PAUSE, COMPLETED, CANCELED
-}
+@Parcelize
+data class CounterServiceInitData(
+    val hours: Int,
+    val minutes: Int,
+    val seconds: Int
+) : Parcelable
 
 @Parcelize
 data class CounterServiceData(
@@ -39,8 +43,41 @@ data class CounterServiceData(
     val seconds: Int
 ) : Parcelable
 
-fun interface CounterServiceObserver {
-    fun update(counterServiceData: CounterServiceData)
+enum class CounterState {
+    START, PAUSE, COMPLETED, CANCELED
+}
+
+object CounterServiceCommands {
+    fun start(context: Context, initData: CounterServiceInitData) {
+        val intent = Intent(context, CounterService::class.java)
+        intent.action = CounterService.ACTION_START
+        intent.putExtra(CounterService.EXTRA_INIT_DATA, initData)
+        context.startService(intent)
+    }
+
+    fun pause(context: Context) {
+        val intent = Intent(context, CounterService::class.java)
+        intent.action = CounterService.ACTION_PAUSE
+        context.startService(intent)
+    }
+
+    fun resume(context: Context) {
+        val intent = Intent(context, CounterService::class.java)
+        intent.action = CounterService.ACTION_RESUME
+        context.startService(intent)
+    }
+
+    fun reset(context: Context) {
+        val intent = Intent(context, CounterService::class.java)
+        intent.action = CounterService.ACTION_RESET
+        context.startService(intent)
+    }
+
+    fun stop(context: Context) {
+        val intent = Intent(context, CounterService::class.java)
+        intent.action = CounterService.ACTION_STOP
+        context.startService(intent)
+    }
 }
 
 @RequiresApi(Build.VERSION_CODES.O)
@@ -49,6 +86,13 @@ class CounterService : Service() {
         const val NOTIFICATION_CHANNEL_ID = "COUNTER_NOTIFICATION_ID"
         const val NOTIFICATION_CHANNEL_NAME = "COUNTER_NOTIFICATION"
         const val NOTIFICATION_ID = 10
+        const val COUNTER_SERVICE_BROADCAST = "COUNTER_SERVICE_BROADCAST"
+        const val EXTRA_INIT_DATA = "COUNTER_SERVICE_EXTRA_START_DATA"
+        const val ACTION_START = "COUNTER_SERVICE_ACTION_START"
+        const val ACTION_PAUSE = "COUNTER_SERVICE_ACTION_PAUSE"
+        const val ACTION_RESUME = "COUNTER_SERVICE_ACTION_RESUME"
+        const val ACTION_RESET = "COUNTER_SERVICE_ACTION_RESET"
+        const val ACTION_STOP = "COUNTER_SERVICE_ACTION_STOP"
     }
 
     private lateinit var notificationManager: NotificationManager
@@ -57,19 +101,48 @@ class CounterService : Service() {
     private val binder = LocalBinder()
 
     private var scope: CoroutineScope = CoroutineScope(Job())
-    private var observers = mutableListOf<CounterServiceObserver>()
     private var counterState = mutableStateOf(CounterState.CANCELED)
     private var firstTotalSeconds = mutableIntStateOf(0)
     private var seconds = mutableIntStateOf(0)
     private var minutes = mutableIntStateOf(0)
     private var hours = mutableIntStateOf(0)
 
-    override fun onBind(intent: Intent?): IBinder = binder
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent != null) {
+            when (intent.action) {
+                ACTION_START -> {
+                    val initData =
+                        intent.getParcelableExtra(
+                            EXTRA_INIT_DATA,
+                            CounterServiceInitData::class.java
+                        )
+                    if (initData != null) {
+                        startForegroundService(initData.hours, initData.minutes, initData.seconds)
+                    }
+                }
 
-    override fun onDestroy() {
-        stopForegroundService()
-        super.onDestroy()
+                ACTION_PAUSE -> {
+                    pauseForegroundService()
+                }
+
+                ACTION_RESUME -> {
+                    resumeForegroundService()
+                }
+
+                ACTION_RESET -> {
+                    stopForegroundService()
+                }
+
+                ACTION_STOP -> {
+                    stopForegroundService()
+                }
+            }
+        }
+
+        return super.onStartCommand(intent, flags, startId)
     }
+
+    override fun onBind(intent: Intent?): IBinder = binder
 
     inner class LocalBinder : Binder() {
         val service: CounterService
@@ -77,7 +150,7 @@ class CounterService : Service() {
     }
 
     @SuppressLint("ForegroundServiceType")
-    fun startForegroundService(hours: Int, minutes: Int, seconds: Int) {
+    private fun startForegroundService(hours: Int, minutes: Int, seconds: Int) {
         this.hours.intValue = hours
         this.minutes.intValue = minutes
         this.seconds.intValue = seconds
@@ -88,19 +161,15 @@ class CounterService : Service() {
         updateNotification(this.hours.intValue, this.minutes.intValue, this.seconds.intValue)
     }
 
-    fun pauseForegroundService() {
+    private fun pauseForegroundService() {
         pauseCounter()
     }
 
-    fun resumeForegroundService() {
+    private fun resumeForegroundService() {
         idleCounter()
     }
 
-    fun resetForegroundService() {
-        resetCounter()
-    }
-
-    fun stopForegroundService() {
+    private fun stopForegroundService() {
         resetCounter()
         notificationManager.cancel(NOTIFICATION_ID)
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -115,17 +184,28 @@ class CounterService : Service() {
         }
 
         if (!this::notificationBuilder.isInitialized) {
-            val intent = Intent(this, MainActivity::class.java)
-            val pendingIntent = PendingIntent.getActivity(
+            val intentActivity = Intent(this, MainActivity::class.java)
+            val pendingIntentActivity = PendingIntent.getActivity(
                 this,
                 0,
-                intent,
+                intentActivity,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
+
+            val intentService = Intent(this, CounterService::class.java)
+            intentService.action = ACTION_STOP
+            val pendingIntentService = PendingIntent.getService(
+                this,
+                1,
+                intentService,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+
             notificationBuilder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setContentTitle("Tick Tack sedang berjalan")
-                .setContentIntent(pendingIntent)
+                .setContentIntent(pendingIntentActivity)
+                .addAction(0, "Hentikan", pendingIntentService)
                 .setOngoing(true)
         }
     }
@@ -144,7 +224,7 @@ class CounterService : Service() {
     private fun provideRingtone() {
         if (!this::ringtone.isInitialized) {
             val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-            ringtone = RingtoneManager.getRingtone(this, notification);
+            ringtone = RingtoneManager.getRingtone(this, notification)
         }
     }
 
@@ -171,51 +251,53 @@ class CounterService : Service() {
     }
 
     private fun idleCounter() {
-        scope.launch {
-            counterState.value = CounterState.START
-            var totalSeconds =
-                (hours.intValue * 60 * 60) + (minutes.intValue * 60) + seconds.intValue
-            if (firstTotalSeconds.intValue == 0) {
-                firstTotalSeconds.intValue = totalSeconds
-            }
-            var isCompleted = false
-
-            while (true) {
-                delay(970)
-                totalSeconds--
-
-                hours.intValue = totalSeconds / 3600
-                minutes.intValue = (totalSeconds % 3600) / 60
-                seconds.intValue = totalSeconds % 60
-
-                if (counterState.value == CounterState.PAUSE) {
-                    break
+        if (counterState.value in listOf(CounterState.PAUSE, CounterState.CANCELED)) {
+            scope.launch {
+                counterState.value = CounterState.START
+                var totalSeconds =
+                    (hours.intValue * 60 * 60) + (minutes.intValue * 60) + seconds.intValue
+                if (firstTotalSeconds.intValue == 0) {
+                    firstTotalSeconds.intValue = totalSeconds
                 }
+                var isCompleted = false
 
-                // Done counting action
-                if (totalSeconds == 0) {
-                    isCompleted = true
-                    updateNotification(hours.intValue, minutes.intValue, seconds.intValue)
-                    notifyObservers()
-                    break
-                }
-
-                // Update every tick
-                updateNotification(hours.intValue, minutes.intValue, seconds.intValue)
-                notifyObservers()
-            }
-
-            // Completed action
-            if (isCompleted) {
-                firstTotalSeconds.intValue = 0
-                counterState.value = CounterState.COMPLETED
-                ringtone.play()
-                notifyObservers()
                 while (true) {
-                    updateNotification(hours.intValue, minutes.intValue, seconds.intValue)
-                    notifyObservers()
-                    if (counterState.value == CounterState.CANCELED) {
+                    delay(970)
+                    totalSeconds--
+
+                    hours.intValue = totalSeconds / 3600
+                    minutes.intValue = (totalSeconds % 3600) / 60
+                    seconds.intValue = totalSeconds % 60
+
+                    if (counterState.value == CounterState.PAUSE) {
                         break
+                    }
+
+                    // Done counting action
+                    if (totalSeconds == 0) {
+                        isCompleted = true
+                        updateNotification(hours.intValue, minutes.intValue, seconds.intValue)
+                        broadcastDataToActivity()
+                        break
+                    }
+
+                    // Update every tick
+                    updateNotification(hours.intValue, minutes.intValue, seconds.intValue)
+                    broadcastDataToActivity()
+                }
+
+                // Completed action
+                if (isCompleted) {
+                    firstTotalSeconds.intValue = 0
+                    counterState.value = CounterState.COMPLETED
+                    ringtone.play()
+                    broadcastDataToActivity()
+                    while (true) {
+                        updateNotification(hours.intValue, minutes.intValue, seconds.intValue)
+                        broadcastDataToActivity()
+                        if (counterState.value == CounterState.CANCELED) {
+                            break
+                        }
                     }
                 }
             }
@@ -226,7 +308,7 @@ class CounterService : Service() {
         counterState.value = CounterState.PAUSE
         scope.cancel()
         scope = CoroutineScope(Job())
-        notifyObservers()
+        broadcastDataToActivity()
     }
 
     private fun resetCounter() {
@@ -239,20 +321,12 @@ class CounterService : Service() {
         this.minutes.intValue = 0
         this.seconds.intValue = 0
         updateNotification(hours.intValue, minutes.intValue, seconds.intValue)
-        notifyObservers()
+        broadcastDataToActivity()
     }
 
-    fun addObserver(observer: CounterServiceObserver) {
-        observers.add(observer)
-    }
-
-    fun removeObserver(observer: CounterServiceObserver) {
-        observers.remove(observer)
-    }
-
-    private fun notifyObservers() {
-        observers.forEach {
-            it.update(generateCounterServiceData())
-        }
+    private fun broadcastDataToActivity() {
+        val intent = Intent(COUNTER_SERVICE_BROADCAST)
+        intent.putExtra(EXTRA_COUNTER_SERVICE_DATA, generateCounterServiceData())
+        sendBroadcast(intent)
     }
 }
