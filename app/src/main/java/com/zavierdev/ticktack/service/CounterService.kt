@@ -112,9 +112,8 @@ class CounterService : Service() {
             when (intent.action) {
                 ACTION_START -> {
                     val initData =
-                        intent.getParcelableExtra(
+                        intent.getParcelableExtra<CounterServiceInitData>(
                             EXTRA_INIT_DATA,
-                            CounterServiceInitData::class.java
                         )
                     if (initData != null) {
                         startForegroundService(initData.hours, initData.minutes, initData.seconds)

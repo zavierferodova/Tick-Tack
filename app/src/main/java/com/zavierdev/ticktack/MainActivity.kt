@@ -128,9 +128,8 @@ fun MainScreen() {
     val broadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val counterServiceData =
-                intent?.getParcelableExtra(
-                    EXTRA_COUNTER_SERVICE_DATA,
-                    CounterServiceData::class.java
+                intent?.getParcelableExtra<CounterServiceData>(
+                    EXTRA_COUNTER_SERVICE_DATA
                 )
 
             if (counterServiceData != null) {
