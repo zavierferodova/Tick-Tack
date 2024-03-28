@@ -3,6 +3,7 @@ package com.zavierdev.ticktack.service
 import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -11,24 +12,32 @@ import android.media.RingtoneManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.Parcelable
 import androidx.annotation.RequiresApi
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.app.NotificationCompat
+import com.zavierdev.ticktack.MainActivity
 import com.zavierdev.ticktack.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.parcelize.Parcelize
 
 enum class CounterState {
     START, PAUSE, COMPLETED, CANCELED
 }
 
+@Parcelize
 data class CounterServiceData(
-    val state: CounterState, val hours: Int, val minutes: Int, val seconds: Int
-)
+    val state: CounterState,
+    val firstTotalSeconds: Int,
+    val hours: Int,
+    val minutes: Int,
+    val seconds: Int
+) : Parcelable
 
 fun interface CounterServiceObserver {
     fun update(counterServiceData: CounterServiceData)
@@ -50,6 +59,7 @@ class CounterService : Service() {
     private var scope: CoroutineScope = CoroutineScope(Job())
     private var observers = mutableListOf<CounterServiceObserver>()
     private var counterState = mutableStateOf(CounterState.CANCELED)
+    private var firstTotalSeconds = mutableIntStateOf(0)
     private var seconds = mutableIntStateOf(0)
     private var minutes = mutableIntStateOf(0)
     private var hours = mutableIntStateOf(0)
@@ -105,9 +115,17 @@ class CounterService : Service() {
         }
 
         if (!this::notificationBuilder.isInitialized) {
+            val intent = Intent(this, MainActivity::class.java)
+            val pendingIntent = PendingIntent.getActivity(
+                this,
+                0,
+                intent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
             notificationBuilder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-                .setContentTitle("Tick Tack sedang berjalan")
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("Tick Tack sedang berjalan")
+                .setContentIntent(pendingIntent)
                 .setOngoing(true)
         }
     }
@@ -130,6 +148,17 @@ class CounterService : Service() {
         }
     }
 
+    private fun generateCounterServiceData(): CounterServiceData {
+        return CounterServiceData(
+            counterState.value,
+            firstTotalSeconds.intValue,
+            hours.intValue,
+            minutes.intValue,
+            seconds.intValue
+        )
+    }
+
+    @SuppressLint("LaunchActivityFromNotification")
     private fun updateNotification(hours: Int, minutes: Int, seconds: Int) {
         val hour: String = if (hours < 10) "0$hours" else hours.toString()
         val minute: String = if (minutes < 10) "0$minutes" else minutes.toString()
@@ -137,10 +166,7 @@ class CounterService : Service() {
 
         notificationManager.notify(
             NOTIFICATION_ID,
-            notificationBuilder
-                .setContentText("$hour:$minute:$second")
-                .setOngoing(true)
-                .build()
+            notificationBuilder.setContentText("$hour:$minute:$second").build()
         )
     }
 
@@ -149,6 +175,9 @@ class CounterService : Service() {
             counterState.value = CounterState.START
             var totalSeconds =
                 (hours.intValue * 60 * 60) + (minutes.intValue * 60) + seconds.intValue
+            if (firstTotalSeconds.intValue == 0) {
+                firstTotalSeconds.intValue = totalSeconds
+            }
             var isCompleted = false
 
             while (true) {
@@ -178,11 +207,13 @@ class CounterService : Service() {
 
             // Completed action
             if (isCompleted) {
+                firstTotalSeconds.intValue = 0
                 counterState.value = CounterState.COMPLETED
                 ringtone.play()
                 notifyObservers()
                 while (true) {
                     updateNotification(hours.intValue, minutes.intValue, seconds.intValue)
+                    notifyObservers()
                     if (counterState.value == CounterState.CANCELED) {
                         break
                     }
@@ -203,6 +234,7 @@ class CounterService : Service() {
         scope.cancel()
         scope = CoroutineScope(Job())
         counterState.value = CounterState.CANCELED
+        firstTotalSeconds.intValue = 0
         this.hours.intValue = 0
         this.minutes.intValue = 0
         this.seconds.intValue = 0
@@ -220,11 +252,7 @@ class CounterService : Service() {
 
     private fun notifyObservers() {
         observers.forEach {
-            it.update(
-                CounterServiceData(
-                    counterState.value, hours.intValue, minutes.intValue, seconds.intValue
-                )
-            )
+            it.update(generateCounterServiceData())
         }
     }
 }

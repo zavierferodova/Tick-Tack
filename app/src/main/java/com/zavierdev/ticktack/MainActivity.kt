@@ -89,7 +89,6 @@ fun MainScreen() {
 
     var countProgress by remember { mutableFloatStateOf(1f) }
     var timerState by remember { mutableStateOf(CounterState.CANCELED) }
-    var firstCountTotalSeconds by remember { mutableIntStateOf(0) }
 
     var seconds by remember { mutableIntStateOf(0) }
     var minutes by remember { mutableIntStateOf(0) }
@@ -116,13 +115,10 @@ fun MainScreen() {
                 timerState = it.state
                 when (it.state) {
                     CounterState.START -> {
-                        if (firstCountTotalSeconds == 0) {
-                            firstCountTotalSeconds = (hours * 60 * 60) + (minutes * 60) + seconds
-                        }
                         val totalSeconds = (hours * 60 * 60) + (minutes * 60) + seconds - 1
                         synchronizeCounterDisplay(it.hours, it.minutes, it.seconds)
                         countProgress =
-                            (totalSeconds.toFloat() / firstCountTotalSeconds.toFloat() * 100) / 100
+                            (totalSeconds.toFloat() / it.firstTotalSeconds.toFloat() * 100) / 100
                     }
 
                     CounterState.PAUSE -> {
@@ -135,7 +131,6 @@ fun MainScreen() {
 
                     CounterState.CANCELED -> {
                         synchronizeCounterDisplay(it.hours, it.minutes, it.seconds)
-                        firstCountTotalSeconds = 0
                         countProgress = 1f
                     }
                 }
