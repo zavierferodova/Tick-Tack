@@ -7,7 +7,9 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.media.Ringtone
+import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.os.Binder
 import android.os.Build
@@ -103,7 +105,7 @@ class CounterService : Service() {
 
     private lateinit var notificationManager: NotificationManager
     private lateinit var notificationBuilder: NotificationCompat.Builder
-    private lateinit var ringtone: Ringtone
+    private lateinit var mediaPlayer: MediaPlayer
     private val binder = LocalBinder()
 
     private var scope: CoroutineScope = CoroutineScope(Job())
@@ -185,6 +187,19 @@ class CounterService : Service() {
         stopSelf()
     }
 
+    private fun automaticStopForegroundService() {
+        if (counterState.value == CounterState.COMPLETED) {
+            scope.launch {
+                var secondsRemaining = 60 * 2 // 2 minutes
+                while (secondsRemaining > 0) {
+                    delay(1000) // Delay for 1 second
+                    secondsRemaining--
+                }
+                stopForegroundService()
+            }
+        }
+    }
+
     private fun provideNotification() {
         if (!this::notificationManager.isInitialized) {
             notificationManager =
@@ -224,17 +239,32 @@ class CounterService : Service() {
             val channel = NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
                 NOTIFICATION_CHANNEL_NAME,
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_HIGH
             )
             notificationManager.createNotificationChannel(channel)
         }
     }
 
     private fun provideRingtone() {
-        if (!this::ringtone.isInitialized) {
-            val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-            ringtone = RingtoneManager.getRingtone(this, notification)
+        if (this::mediaPlayer.isInitialized) {
+            mediaPlayer.release()
         }
+
+        val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ALARM)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+        mediaPlayer = MediaPlayer()
+        mediaPlayer.setDataSource(this, notification)
+        mediaPlayer.setAudioAttributes(audioAttributes)
+        mediaPlayer.isLooping = true
+        mediaPlayer.setVolume(
+            audioManager.getStreamVolume(AudioManager.STREAM_ALARM).toFloat(),
+            audioManager.getStreamVolume(AudioManager.STREAM_ALARM).toFloat()
+        )
+        mediaPlayer.prepare()
     }
 
     private fun generateCounterServiceData(): CounterServiceData {
@@ -255,7 +285,8 @@ class CounterService : Service() {
 
         notificationManager.notify(
             NOTIFICATION_ID,
-            notificationBuilder.setContentText("$hour:$minute:$second").build()
+            notificationBuilder.setContentText("$hour:$minute:$second")
+                .build()
         )
     }
 
@@ -299,7 +330,8 @@ class CounterService : Service() {
                 if (isCompleted) {
                     firstTotalSeconds.intValue = 0
                     counterState.value = CounterState.COMPLETED
-                    ringtone.play()
+                    mediaPlayer.start()
+                    automaticStopForegroundService()
                     broadcastDataToActivity()
                     while (true) {
                         updateNotification(hours.intValue, minutes.intValue, seconds.intValue)
@@ -321,7 +353,8 @@ class CounterService : Service() {
     }
 
     private fun resetCounter() {
-        ringtone.stop()
+        mediaPlayer.stop()
+        mediaPlayer.release()
         scope.cancel()
         scope = CoroutineScope(Job())
         counterState.value = CounterState.CANCELED
